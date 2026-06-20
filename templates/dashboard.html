@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — SyncLogistics{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_actions %}
+  <a href="/outbound" class="btn btn-ghost btn-sm">View outbound</a>
+  <a href="/outbound" class="btn btn-primary btn-sm" onclick="event.preventDefault(); window.location='/outbound'">+ New order</a>
+{% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+<!-- KPI bar -->
+<div class="stats-bar" style="grid-template-columns:repeat(6,1fr)">
+  <div class="stat-tile">
+    <span class="stat-value" id="stat-total">—</span>
+    <span class="stat-label">Products</span>
+  </div>
+  <div class="stat-tile" id="stat-low-tile">
+    <span class="stat-value" id="stat-low">—</span>
+    <span class="stat-label">Low stock</span>
+  </div>
+  <div class="stat-tile">
+    <span class="stat-value" id="stat-units">—</span>
+    <span class="stat-label">Units in stock</span>
+  </div>
+  <div class="stat-tile">
+    <span class="stat-value" id="stat-value">—</span>
+    <span class="stat-label">Stock value (RON)</span>
+  </div>
+  <div class="stat-tile" id="stat-inbound-tile">
+    <span class="stat-value" id="stat-pending">—</span>
+    <span class="stat-label">Inbound pending</span>
+  </div>
+  <div class="stat-tile" id="stat-outbound-tile">
+    <span class="stat-value" id="stat-outbound">—</span>
+    <span class="stat-label">Outbound pending</span>
+  </div>
+</div>
+
+<!-- Chart + pending outbound -->
+<div class="dash-grid">
+  <div class="card mb-0">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px">
+      <span class="card-title mb-0">Stock activity</span>
+      <span class="muted-text text-sm">last 7 days</span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="movement-chart"></canvas>
+    </div>
+  </div>
+  <div class="card mb-0" style="display:flex;flex-direction:column">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+      <span class="card-title mb-0">Pending outbound</span>
+      <a href="/outbound" class="btn-link text-sm" style="font-size:12px">See all</a>
+    </div>
+    <div id="pending-outbound-list" style="flex:1"></div>
+  </div>
+</div>
+
+<div style="height:20px"></div>
+
+<!-- Low stock alerts -->
+<div class="card">
+  <div class="row-between">
+    <span class="card-title mb-0">Low stock alerts</span>
+    <a href="/reports" class="btn btn-ghost btn-sm">Reorder report</a>
+  </div>
+  <div class="table-wrap" style="margin-top:4px">
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>SKU</th>
+          <th>Category</th>
+          <th>Client</th>
+          <th class="num">Qty</th>
+          <th class="num">Alert at</th>
+          <th class="num">Reorder qty</th>
+          <th>Location</th>
+        </tr>
+      </thead>
+      <tbody id="low-stock-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const OB_STATUS = { pending:"Pending", processing:"Processing", shipped:"Shipped", cancelled:"Cancelled" };
+
+async function loadStats() {
+  const s = await api("/api/stats");
+  document.getElementById("stat-total").textContent   = formatNum(s.total_products);
+  document.getElementById("stat-units").textContent   = formatNum(s.total_units);
+  document.getElementById("stat-value").textContent   = formatNum(Math.round(s.total_value));
+  document.getElementById("stat-low").textContent     = s.low_stock_count;
+  document.getElementById("stat-pending").textContent = s.pending_orders;
+  document.getElementById("stat-outbound").textContent= s.outbound_pending;
+  document.getElementById("stat-low-tile").className =
+    "stat-tile" + (s.low_stock_count > 0 ? " stat-tile--warn" : "");
+  document.getElementById("stat-inbound-tile").className =
+    "stat-tile" + (s.pending_orders > 0 ? " stat-tile--blue" : "");
+  document.getElementById("stat-outbound-tile").className =
+    "stat-tile" + (s.outbound_pending > 0 ? " stat-tile--purple" : "");
+}
+
+async function loadPendingOutbound() {
+  const all  = await api("/api/outbound");
+  const rows = all.filter(o => o.status === "pending" || o.status === "processing").slice(0, 8);
+  const el   = document.getElementById("pending-outbound-list");
+  if (!rows.length) {
+    el.innerHTML = '<p class="muted-text text-sm" style="padding-top:8px">No pending outbound orders.</p>';
+    return;
+  }
+  el.innerHTML = rows.map(o => `
+    <a href="/outbound/${o.id}" style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);text-decoration:none;color:inherit">
+      <div>
+        <div style="font-weight:600;font-size:13px;color:var(--accent)">${esc(o.reference)}</div>
+        <div class="muted-text text-sm">${esc(o.customer_name||"—")} · ${o.total_units} units</div>
+      </div>
+      <div style="text-align:right">
+        <span class="badge status-${esc(o.status)}">${esc(OB_STATUS[o.status]||o.status)}</span>
+        ${o.required_date ? `<div class="muted-text text-sm" style="margin-top:3px">${esc(o.required_date)}</div>` : ""}
+      </div>
+    </a>`).join("");
+}
+
+async function loadLowStock() {
+  const rows  = await api("/api/reports/reorder");
+  const tbody = document.getElementById("low-stock-body");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">All products are sufficiently stocked.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(p => `
+    <tr class="low">
+      <td style="font-weight:600">${esc(p.name)}</td>
+      <td class="muted-text">${esc(p.sku)}</td>
+      <td>${catBadge(p.category_name, p.category_color)}</td>
+      <td>${esc(p.supplier_name || "—")}</td>
+      <td class="qty-cell"><span class="qty-badge">${p.quantity}</span></td>
+      <td class="num muted-text">${p.low_stock_threshold}</td>
+      <td class="num" style="font-weight:600;color:var(--accent)">${p.reorder_quantity}</td>
+      <td class="muted-text">${esc(p.location || "—")}</td>
+    </tr>`).join("");
+}
+
+async function loadChart() {
+  const data = await api("/api/stats/chart");
+  const ctx  = document.getElementById("movement-chart").getContext("2d");
+
+  const hasData = data.some(r => r.stock_in > 0 || r.stock_out > 0);
+  if (!hasData) {
+    ctx.canvas.parentElement.innerHTML =
+      '<p class="muted-text text-sm" style="padding-top:40px;text-align:center">No activity in the last 7 days.</p>';
+    return;
+  }
+
+  new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: data.map(r => {
+        const [y, m, d] = r.day.split("-");
+        return new Date(+y, +m - 1, +d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+      }),
+      datasets: [
+        {
+          label: "In",
+          data: data.map(r => r.stock_in),
+          backgroundColor: "rgba(22,163,74,0.82)",
+          borderRadius: 5,
+          borderSkipped: false,
+          barPercentage: 0.75,
+        },
+        {
+          label: "Out",
+          data: data.map(r => r.stock_out),
+          backgroundColor: "rgba(220,38,38,0.72)",
+          borderRadius: 5,
+          borderSkipped: false,
+          barPercentage: 0.75,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "end",
+          labels: { boxWidth: 12, boxHeight: 12, font: { size: 12 }, padding: 14 },
+        },
+        tooltip: {
+          backgroundColor: "rgba(15,23,42,0.9)",
+          padding: 10,
+          titleFont: { size: 12 },
+          bodyFont: { size: 12 },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 11 }, color: "#6b7a8d" },
+          border: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          border: { display: false },
+          grid: { color: "#f0f2f5" },
+          ticks: { font: { size: 11 }, color: "#6b7a8d", precision: 0 },
+        },
+      },
+    },
+  });
+}
+
+Promise.all([loadStats(), loadPendingOutbound(), loadLowStock(), loadChart()]);
+</script>
+{% endblock %}

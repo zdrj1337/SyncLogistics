@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Work Instructions — SyncLogistics{% endblock %}
+{% block page_title %}Work Instructions{% endblock %}
+{% block page_actions %}
+  <button class="btn btn-primary btn-sm" onclick="openAddWI()">+ Add instruction</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="margin-bottom:12px;background:var(--accent-light);border-color:#bfcfff">
+  <div style="display:flex;gap:12px;align-items:flex-start">
+    <div style="font-size:18px">ℹ</div>
+    <div style="font-size:13px">
+      Work instructions (WI) are standard procedures applied to specific order lines — for example, applying a client asset tag, performing a BIOS configuration, or running a quality check.
+      Assign WIs when creating or editing an outbound order.
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="code">Code</th>
+          <th data-sort="title">Title</th>
+          <th>Description</th>
+          <th class="num" data-sort="estimated_minutes">Est. time</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="wi-body">
+        <tr><td colspan="6" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allWIs = [];
+
+function renderWIs(rows) {
+  const tbody = document.getElementById("wi-body");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No work instructions defined.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(w => `
+    <tr>
+      <td><span class="wi-tag">${esc(w.code)}</span></td>
+      <td><strong>${esc(w.title)}</strong></td>
+      <td class="muted-text text-sm">${esc(w.description||"—")}</td>
+      <td class="num">${w.estimated_minutes > 0 ? w.estimated_minutes + " min" : "—"}</td>
+      <td>${w.active
+        ? '<span class="badge badge--ok">Active</span>'
+        : '<span class="badge badge--muted">Inactive</span>'}</td>
+      <td class="actions-cell">
+        <button class="btn-link" onclick="openEditWI(${w.id})">Edit</button>
+        <button class="btn-link btn-link--danger" onclick="deleteWI(${w.id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+
+async function loadWIs() {
+  allWIs = await api("/api/work-instructions");
+  renderWIs(allWIs);
+}
+
+function wiFormHTML(w = {}) {
+  return `
+    <div class="form-grid">
+      <label class="field">Code *
+        <input type="text" id="wf-code" value="${esc(w.code||"")}" placeholder="WI-001"
+               style="text-transform:uppercase" ${w.id ? "readonly" : ""} />
+      </label>
+      <label class="field">Estimated time (minutes)
+        <input type="number" id="wf-mins" value="${w.estimated_minutes||0}" min="0" />
+      </label>
+    </div>
+    <label class="field" style="margin-bottom:12px">Title *
+      <input type="text" id="wf-title" value="${esc(w.title||"")}" placeholder="e.g. Apply client asset tag" />
+    </label>
+    <label class="field" style="margin-bottom:12px">Description
+      <textarea id="wf-desc" rows="3">${esc(w.description||"")}</textarea>
+    </label>
+    ${w.id ? `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+      <input type="checkbox" id="wf-active" ${w.active ? "checked" : ""} />
+      Active (available for new orders)
+    </label>` : ""}`;
+}
+
+function collectWIForm(isEdit = false) {
+  const d = {
+    code:               document.getElementById("wf-code").value.trim().toUpperCase(),
+    title:              document.getElementById("wf-title").value.trim(),
+    description:        document.getElementById("wf-desc").value.trim(),
+    estimated_minutes:  parseInt(document.getElementById("wf-mins").value) || 0,
+  };
+  if (isEdit) d.active = document.getElementById("wf-active").checked ? 1 : 0;
+  return d;
+}
+
+function openAddWI() {
+  modal.open("Add work instruction", wiFormHTML(), {
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewWI()">Add</button>
+    `,
+    onOpen: () => document.getElementById("wf-code").focus(),
+  });
+}
+
+async function saveNewWI() {
+  const data = collectWIForm();
+  if (!data.code || !data.title) { showToast("Code and title are required.", "error"); return; }
+  try {
+    await api("/api/work-instructions", { method: "POST", body: JSON.stringify(data) });
+    modal.close();
+    showToast("Work instruction added.");
+    await loadWIs();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+function openEditWI(id) {
+  const w = allWIs.find(x => x.id === id);
+  if (!w) return;
+  modal.open(`Edit — ${w.code}`, wiFormHTML(w), {
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditWI(${id})">Save</button>
+    `,
+    onOpen: () => document.getElementById("wf-title").focus(),
+  });
+}
+
+async function saveEditWI(id) {
+  const data = collectWIForm(true);
+  if (!data.title) { showToast("Title is required.", "error"); return; }
+  try {
+    await api(`/api/work-instructions/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    modal.close();
+    showToast("Work instruction updated.");
+    await loadWIs();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+function deleteWI(id) {
+  const w = allWIs.find(x => x.id === id);
+  confirmDialog(
+    `Delete "${w?.code} — ${w?.title}"?`,
+    "This work instruction will be permanently removed.",
+    async () => {
+      try {
+        await api(`/api/work-instructions/${id}`, { method: "DELETE" });
+        showToast("Deleted.", "warn");
+        await loadWIs();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Delete" }
+  );
+}
+
+loadWIs();
+</script>
+{% endblock %}

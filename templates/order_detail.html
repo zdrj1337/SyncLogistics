@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Order Detail — SyncLogistics{% endblock %}
+{% block page_title %}Purchase Order{% endblock %}
+{% block page_actions %}
+  <a href="/orders" class="btn btn-ghost btn-sm">← Back to orders</a>
+  <button class="btn btn-primary btn-sm no-print" id="receive-btn" onclick="openReceiveModal()" style="display:none">
+    Receive goods
+  </button>
+{% endblock %}
+
+{% block content %}
+
+<div class="two-col">
+  <!-- Order details -->
+  <div>
+    <div class="card" id="order-header">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+        <div>
+          <div style="font-size:22px;font-weight:700;letter-spacing:-0.01em" id="order-ref">—</div>
+          <div class="muted-text text-sm mt-4" id="order-dates"></div>
+        </div>
+        <div id="order-status"></div>
+      </div>
+      <hr class="divider" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div class="muted-text text-sm">Supplier</div>
+          <div id="order-supplier" style="font-weight:600;margin-top:2px">—</div>
+          <div class="muted-text text-sm" id="order-supplier-contact"></div>
+        </div>
+        <div>
+          <div class="muted-text text-sm">Notes</div>
+          <div id="order-notes" style="margin-top:2px">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <div class="card">
+      <div class="card-title">Line items</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>SKU</th>
+              <th class="num">Ordered</th>
+              <th class="num">Received</th>
+              <th class="num">Remaining</th>
+              <th class="num">Unit price</th>
+              <th class="num">Total</th>
+            </tr>
+          </thead>
+          <tbody id="items-body">
+            <tr><td colspan="7" class="empty">Loading…</td></tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="5"></td>
+              <td class="num muted-text text-sm">Total</td>
+              <td class="num" style="font-weight:700" id="order-total">—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar info -->
+  <div>
+    <div class="card">
+      <div class="card-title">Progress</div>
+      <div id="progress-bar-wrap" style="margin-bottom:12px">
+        <div style="background:var(--line);border-radius:8px;height:10px;overflow:hidden">
+          <div id="progress-bar" style="background:var(--ok);height:100%;transition:width 0.4s;width:0%"></div>
+        </div>
+        <div class="muted-text text-sm mt-4" id="progress-label"></div>
+      </div>
+    </div>
+
+    <div class="card" id="movements-card">
+      <div class="card-title">Stock movements from this order</div>
+      <ul id="order-movements" class="activity"></ul>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ORDER_ID = {{ order_id }};
+let orderData  = null;
+
+async function loadOrder() {
+  orderData = await api(`/api/orders/${ORDER_ID}`);
+  const o   = orderData;
+
+  document.getElementById("order-ref").textContent     = o.reference;
+  document.getElementById("order-status").innerHTML    = statusBadge(o.status);
+  document.getElementById("order-dates").textContent   =
+    `Created: ${o.created_at}${o.expected_date ? " · Expected: " + o.expected_date : ""}${o.received_at ? " · Received: " + o.received_at : ""}`;
+  document.getElementById("order-supplier").textContent = o.supplier_name || "— No supplier —";
+  document.getElementById("order-supplier-contact").textContent =
+    [o.supplier_email, o.supplier_phone].filter(Boolean).join(" · ") || "";
+  document.getElementById("order-notes").textContent   = o.notes || "—";
+
+  // Items
+  const tbody = document.getElementById("items-body");
+  let total   = 0;
+  let totOrdered = 0, totReceived = 0;
+
+  if (!o.items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No items.</td></tr>';
+  } else {
+    tbody.innerHTML = o.items.map(i => {
+      const remaining = i.quantity_ordered - i.quantity_received;
+      const lineTotal = i.quantity_ordered * i.unit_price;
+      total      += lineTotal;
+      totOrdered += i.quantity_ordered;
+      totReceived+= i.quantity_received;
+      const cls  = remaining > 0 ? "" : "muted-text";
+      return `<tr>
+        <td>${esc(i.product_name)}</td>
+        <td class="muted-text">${esc(i.sku)}</td>
+        <td class="num">${i.quantity_ordered} ${esc(i.unit)}</td>
+        <td class="num">${i.quantity_received} ${esc(i.unit)}</td>
+        <td class="num ${cls}">${remaining > 0 ? remaining : "✓"}</td>
+        <td class="num">${i.unit_price > 0 ? formatCurrency(i.unit_price) : "—"}</td>
+        <td class="num">${lineTotal > 0 ? formatCurrency(lineTotal) : "—"}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  document.getElementById("order-total").textContent = total > 0 ? formatCurrency(total) : "—";
+
+  // Progress
+  const pct = totOrdered > 0 ? Math.round((totReceived / totOrdered) * 100) : 0;
+  document.getElementById("progress-bar").style.width = pct + "%";
+  document.getElementById("progress-label").textContent = `${totReceived} / ${totOrdered} units received (${pct}%)`;
+
+  // Show receive button for non-completed orders
+  if (o.status !== "received" && o.status !== "cancelled") {
+    document.getElementById("receive-btn").style.display = "";
+  }
+
+  // Load related movements
+  const movements = await api(`/api/movements?limit=50`);
+  const related   = movements.filter(m => m.reference === o.reference);
+  const ul        = document.getElementById("order-movements");
+  if (!related.length) {
+    ul.innerHTML = '<li><span class="when">No movements yet.</span></li>';
+  } else {
+    ul.innerHTML = related.map(m => `
+      <li>
+        <span>${esc(m.product_name)} <span class="delta-pos">+${m.delta}</span></span>
+        <span class="when">${esc(m.created_at)}</span>
+      </li>`).join("");
+  }
+}
+
+// ---- Receive modal -------------------------------------------------------
+function openReceiveModal() {
+  if (!orderData) return;
+  const items = orderData.items.filter(i => i.quantity_received < i.quantity_ordered);
+  if (!items.length) { showToast("All items already received.", "warn"); return; }
+
+  const linesHTML = items.map(i => {
+    const remaining = i.quantity_ordered - i.quantity_received;
+    return `
+      <div class="form-row" style="align-items:flex-end">
+        <div style="flex:2">
+          <strong>${esc(i.product_name)}</strong>
+          <div class="muted-text text-sm">Remaining: ${remaining} ${esc(i.unit)}</div>
+        </div>
+        <label class="field" style="flex:0 0 100px">Receive qty
+          <input type="number" class="receive-qty" data-item-id="${i.id}"
+                 value="${remaining}" min="0" max="${remaining}" />
+        </label>
+      </div>`;
+  }).join('<hr class="divider" />');
+
+  modal.open("Receive goods", linesHTML, {
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveReceive()">Confirm receipt</button>
+    `,
+  });
+}
+
+async function saveReceive() {
+  const inputs = document.querySelectorAll(".receive-qty");
+  const items  = [];
+  inputs.forEach(inp => {
+    const qty = parseInt(inp.value) || 0;
+    if (qty > 0) items.push({ item_id: parseInt(inp.dataset.itemId), quantity_received: qty });
+  });
+  if (!items.length) { showToast("Enter at least one quantity.", "error"); return; }
+
+  try {
+    const res = await api(`/api/orders/${ORDER_ID}/receive`, {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    });
+    modal.close();
+    showToast(`Goods received. Status: ${res.status}.`);
+    await loadOrder();
+    loadSidebarBadges();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+loadOrder();
+</script>
+{% endblock %}

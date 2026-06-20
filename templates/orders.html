@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Purchase Orders — SyncLogistics{% endblock %}
+{% block page_title %}Purchase Orders{% endblock %}
+{% block page_actions %}
+  <button class="btn btn-primary btn-sm" onclick="openNewOrder()">+ New order</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="filter-bar" style="margin-bottom:16px">
+  <select id="filter-status">
+    <option value="">All statuses</option>
+    <option value="ordered">Ordered</option>
+    <option value="partial">Partial</option>
+    <option value="received">Received</option>
+    <option value="cancelled">Cancelled</option>
+  </select>
+  <span id="order-count" class="muted-text text-sm"></span>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="reference">Reference</th>
+          <th data-sort="supplier_name">Supplier</th>
+          <th data-sort="created_at">Date</th>
+          <th data-sort="expected_date">Expected</th>
+          <th data-sort="status">Status</th>
+          <th class="num" data-sort="item_count">Items</th>
+          <th class="num" data-sort="total_value">Value</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="orders-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allOrders   = [];
+let allProducts = [];
+let allSuppliers= [];
+
+function renderOrders(rows) {
+  const tbody = document.getElementById("orders-body");
+  document.getElementById("order-count").textContent =
+    rows.length ? `${rows.length} order${rows.length !== 1 ? "s" : ""}` : "";
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No purchase orders yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(o => `
+    <tr>
+      <td><a href="/orders/${o.id}" style="font-weight:700;color:var(--accent)">${esc(o.reference)}</a></td>
+      <td>${esc(o.supplier_name || "—")}</td>
+      <td class="muted-text">${esc(o.created_at)}</td>
+      <td class="muted-text">${esc(o.expected_date || "—")}</td>
+      <td>${statusBadge(o.status)}</td>
+      <td class="num">${o.item_count}</td>
+      <td class="num">${o.total_value > 0 ? formatCurrency(o.total_value) : "—"}</td>
+      <td class="actions-cell">
+        <a href="/orders/${o.id}" class="btn-link">View</a>
+        ${o.status !== "received" && o.status !== "cancelled"
+          ? `<button class="btn-link btn-link--danger" onclick="cancelOrder(${o.id})">Cancel</button>`
+          : ""}
+      </td>
+    </tr>`).join("");
+}
+
+async function loadOrders() {
+  allOrders = await api("/api/orders");
+  const status = document.getElementById("filter-status").value;
+  const filtered = status ? allOrders.filter(o => o.status === status) : allOrders;
+  renderOrders(filtered);
+}
+
+function cancelOrder(id) {
+  const o = allOrders.find(x => x.id === id);
+  confirmDialog(
+    `Cancel order ${o?.reference}?`,
+    "This inbound order will be marked as cancelled.",
+    async () => {
+      try {
+        await api(`/api/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+        showToast("Order cancelled.", "warn");
+        await loadOrders();
+        loadSidebarBadges();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Cancel Order", type: "warn" }
+  );
+}
+
+// ---- New order form -----------------------------------------------------
+let orderLines = [];
+
+function openNewOrder() {
+  orderLines = [{ product_id: "", quantity_ordered: 1, unit_price: 0 }];
+  modal.open("New purchase order", newOrderHTML(), {
+    lg: true,
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewOrder()">Create order</button>
+    `,
+  });
+}
+
+function newOrderHTML() {
+  const supOpts = allSuppliers.map(s =>
+    `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+  const prodOpts = allProducts.map(p =>
+    `<option value="${p.id}">${esc(p.name)} (${esc(p.sku)})</option>`).join("");
+
+  const linesHTML = orderLines.map((_, i) => lineHTML(i, prodOpts)).join("");
+
+  return `
+    <div class="form-grid" style="margin-bottom:14px">
+      <label class="field">Supplier
+        <select id="no-supplier"><option value="">— select —</option>${supOpts}</select>
+      </label>
+      <label class="field">Expected delivery
+        <input type="date" id="no-expected" />
+      </label>
+    </div>
+    <label class="field" style="margin-bottom:16px">Notes
+      <input type="text" id="no-notes" placeholder="Optional note…" />
+    </label>
+    <div class="card-title">Line items</div>
+    <div id="order-lines">${linesHTML}</div>
+    <button class="btn btn-ghost btn-sm mt-8" onclick="addOrderLine()">+ Add line</button>`;
+}
+
+function lineHTML(i, prodOpts) {
+  if (!prodOpts) {
+    prodOpts = allProducts.map(p =>
+      `<option value="${p.id}">${esc(p.name)} (${esc(p.sku)})</option>`).join("");
+  }
+  return `
+    <div class="form-row" id="line-${i}" style="align-items:flex-end">
+      <label class="field" style="flex:2">Product
+        <select id="line-prod-${i}"><option value="">— select product —</option>${prodOpts}</select>
+      </label>
+      <label class="field" style="flex:0 0 90px">Qty
+        <input type="number" id="line-qty-${i}" value="1" min="1" />
+      </label>
+      <label class="field" style="flex:0 0 110px">Unit price
+        <input type="number" id="line-price-${i}" value="0" min="0" step="0.01" />
+      </label>
+      <button class="btn-step" style="margin-bottom:2px" onclick="removeLine(${i})" title="Remove">×</button>
+    </div>`;
+}
+
+function addOrderLine() {
+  orderLines.push({ product_id: "", quantity_ordered: 1, unit_price: 0 });
+  const i = orderLines.length - 1;
+  const prodOpts = allProducts.map(p =>
+    `<option value="${p.id}">${esc(p.name)} (${esc(p.sku)})</option>`).join("");
+  document.getElementById("order-lines").insertAdjacentHTML("beforeend", lineHTML(i, prodOpts));
+}
+
+function removeLine(i) {
+  document.getElementById(`line-${i}`)?.remove();
+}
+
+async function saveNewOrder() {
+  const supplier_id   = document.getElementById("no-supplier").value || null;
+  const expected_date = document.getElementById("no-expected").value;
+  const notes         = document.getElementById("no-notes").value.trim();
+
+  const items = [];
+  orderLines.forEach((_, i) => {
+    const el = document.getElementById(`line-${i}`);
+    if (!el) return;
+    const pid   = document.getElementById(`line-prod-${i}`)?.value;
+    const qty   = parseInt(document.getElementById(`line-qty-${i}`)?.value) || 0;
+    const price = parseFloat(document.getElementById(`line-price-${i}`)?.value) || 0;
+    if (pid && qty > 0) items.push({ product_id: pid, quantity_ordered: qty, unit_price: price });
+  });
+
+  if (!items.length) { showToast("Add at least one line item.", "error"); return; }
+
+  try {
+    const res = await api("/api/orders", {
+      method: "POST",
+      body: JSON.stringify({ supplier_id, expected_date, notes, items }),
+    });
+    modal.close();
+    showToast(`Order ${res.reference} created.`);
+    window.location.href = `/orders/${res.id}`;
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+// ---- Init ----------------------------------------------------------------
+document.getElementById("filter-status").addEventListener("change", loadOrders);
+
+async function init() {
+  [allProducts, allSuppliers] = await Promise.all([
+    api("/api/products"),
+    api("/api/suppliers"),
+  ]);
+  await loadOrders();
+}
+init();
+</script>
+{% endblock %}

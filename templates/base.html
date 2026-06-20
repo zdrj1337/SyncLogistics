@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}SyncLogistics{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <a href="/" class="sidebar-brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" width="22" height="22" class="brand-svg">
+        <rect x="1" y="3" width="15" height="13" rx="2"/>
+        <path d="M16 8h4l3 3v5h-7V8z"/>
+        <circle cx="5.5" cy="18.5" r="2.5"/>
+        <circle cx="18.5" cy="18.5" r="2.5"/>
+      </svg>
+      <div>
+        <div class="brand-name">SyncLogistics</div>
+        <div class="brand-sub">Warehouse Management</div>
+      </div>
+    </a>
+
+    <div class="nav-section-label">Inventory</div>
+    <ul class="nav-list">
+      <li>
+        <a href="/" class="nav-link {{ 'active' if request.path == '/' }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+          </svg>
+          Dashboard
+        </a>
+      </li>
+      <li>
+        <a href="/products" class="nav-link {{ 'active' if request.path.startswith('/products') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+          Products
+          <span class="nav-badge nav-badge--warn hidden" id="badge-low-stock"></span>
+        </a>
+      </li>
+    </ul>
+
+    <div class="nav-section-label">Operations</div>
+    <ul class="nav-list">
+      <li>
+        <a href="/orders" class="nav-link {{ 'active' if request.path.startswith('/orders') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="7 16 3 12 7 8"/><line x1="3" y1="12" x2="15" y2="12"/>
+            <path d="M21 20H7"/><path d="M21 4H7"/><path d="M21 12H17"/>
+          </svg>
+          Inbound Orders
+          <span class="nav-badge hidden" id="badge-pending"></span>
+        </a>
+      </li>
+      <li>
+        <a href="/outbound" class="nav-link {{ 'active' if request.path.startswith('/outbound') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="17 8 21 12 17 16"/><line x1="21" y1="12" x2="9" y2="12"/>
+            <path d="M3 20H17"/><path d="M3 4H17"/><path d="M3 12H7"/>
+          </svg>
+          Outbound Orders
+          <span class="nav-badge nav-badge--out hidden" id="badge-outbound"></span>
+        </a>
+      </li>
+      <li>
+        <a href="/movements" class="nav-link {{ 'active' if request.path.startswith('/movements') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <polyline points="19 12 12 19 5 12"/>
+          </svg>
+          Movements
+        </a>
+      </li>
+    </ul>
+
+    <div class="nav-section-label">Contacts</div>
+    <ul class="nav-list">
+      <li>
+        <a href="/suppliers" class="nav-link {{ 'active' if request.path.startswith('/suppliers') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="3" width="15" height="13" rx="2"/>
+            <path d="M16 8h4l3 3v5h-7V8z"/>
+            <circle cx="5.5" cy="18.5" r="2.5"/>
+            <circle cx="18.5" cy="18.5" r="2.5"/>
+          </svg>
+          Clients
+        </a>
+      </li>
+      <li>
+        <a href="/customers" class="nav-link {{ 'active' if request.path.startswith('/customers') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          Customers
+        </a>
+      </li>
+    </ul>
+
+    <div class="nav-section-label">Analytics</div>
+    <ul class="nav-list">
+      <li>
+        <a href="/reports" class="nav-link {{ 'active' if request.path.startswith('/reports') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
+            <line x1="2" y1="20" x2="22" y2="20"/>
+          </svg>
+          Reports
+        </a>
+      </li>
+      <li>
+        <a href="/work-instructions" class="nav-link {{ 'active' if request.path.startswith('/work-instructions') }}">
+          <svg class="nav-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 11l3 3L22 4"/>
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+          Work Instructions
+        </a>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">SyncLogistics · Florin-Traian Z.</div>
+  </nav>
+
+  <!-- Mobile nav overlay -->
+  <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
+
+  <!-- Main content -->
+  <div class="page-main">
+    <div class="page-header">
+      <div class="page-header-left">
+        <button class="hamburger-btn" id="hamburgerBtn" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <h1>{% block page_title %}{% endblock %}</h1>
+      </div>
+      <div class="page-actions">{% block page_actions %}{% endblock %}</div>
+    </div>
+    <div class="page-body">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+</div>
+
+<!-- Global modal -->
+<div class="modal" id="modal">
+  <div class="modal-overlay"></div>
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modal-title"></h2>
+      <button class="modal-close" onclick="modal.close()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="confirm-dlg" id="confirm-dlg">
+  <div class="confirm-dlg-overlay"></div>
+  <div class="confirm-dlg-box">
+    <div class="confirm-dlg-icon" id="confirm-dlg-icon"></div>
+    <h3 class="confirm-dlg-title" id="confirm-dlg-title"></h3>
+    <p class="confirm-dlg-msg" id="confirm-dlg-msg"></p>
+    <div class="confirm-dlg-actions">
+      <button class="btn btn-ghost" id="confirm-dlg-cancel">Cancel</button>
+      <button class="btn" id="confirm-dlg-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.js"></script>
+<script src="{{ url_for('static', filename='common.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

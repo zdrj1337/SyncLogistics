@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Outbound Orders — SyncLogistics{% endblock %}
+{% block page_title %}Outbound Orders{% endblock %}
+{% block page_actions %}
+  <button class="btn btn-primary btn-sm" onclick="openNewOutbound()">+ New order</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="filter-bar" style="margin-bottom:16px">
+  <select id="filter-status">
+    <option value="">All statuses</option>
+    <option value="pending">Pending</option>
+    <option value="processing">Processing</option>
+    <option value="shipped">Shipped</option>
+    <option value="cancelled">Cancelled</option>
+  </select>
+  <select id="filter-customer">
+    <option value="">All customers</option>
+  </select>
+  <span id="ob-count" class="muted-text text-sm"></span>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="reference">Reference</th>
+          <th data-sort="customer_name">Customer</th>
+          <th data-sort="created_at">Created</th>
+          <th data-sort="required_date">Required by</th>
+          <th data-sort="status">Status</th>
+          <th class="num" data-sort="item_count">SKUs</th>
+          <th class="num" data-sort="total_units">Units</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="outbound-body">
+        <tr><td colspan="8" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allOrders    = [];
+let allCustomers = [];
+let allProducts  = [];
+let allWIs       = [];
+
+const STATUS_LABELS = { pending:"Pending", processing:"Processing", shipped:"Shipped", cancelled:"Cancelled" };
+
+function outboundStatusBadge(s) {
+  return `<span class="badge status-${esc(s)}">${esc(STATUS_LABELS[s]||s)}</span>`;
+}
+
+function renderOrders(rows) {
+  const tbody = document.getElementById("outbound-body");
+  document.getElementById("ob-count").textContent =
+    rows.length ? `${rows.length} order${rows.length !== 1 ? "s" : ""}` : "";
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No outbound orders found.</td></tr>';
+    return;
+  }
+  const urgent = new Date(); urgent.setDate(urgent.getDate() + 3);
+  tbody.innerHTML = rows.map(o => {
+    const reqDate = o.required_date ? new Date(o.required_date) : null;
+    const isUrgent = reqDate && reqDate <= urgent && o.status !== "shipped" && o.status !== "cancelled";
+    return `
+    <tr>
+      <td><a href="/outbound/${o.id}" style="font-weight:700;color:var(--accent)">${esc(o.reference)}</a>
+        ${isUrgent ? '<span class="low-tag">URGENT</span>' : ""}
+      </td>
+      <td>${esc(o.customer_name||"—")}</td>
+      <td class="muted-text">${esc(o.created_at)}</td>
+      <td class="muted-text">${esc(o.required_date||"—")}</td>
+      <td>${outboundStatusBadge(o.status)}</td>
+      <td class="num">${o.item_count}</td>
+      <td class="num">${o.total_units}</td>
+      <td class="actions-cell">
+        <a href="/outbound/${o.id}" class="btn-link">View</a>
+        ${o.status === "pending" || o.status === "processing"
+          ? `<button class="btn-link btn-link--danger" onclick="cancelOrder(${o.id})">Cancel</button>`
+          : ""}
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadOrders() {
+  allOrders = await api("/api/outbound");
+  applyFilters();
+}
+
+function applyFilters() {
+  const status   = document.getElementById("filter-status").value;
+  const customer = document.getElementById("filter-customer").value;
+  let rows = allOrders;
+  if (status)   rows = rows.filter(o => o.status === status);
+  if (customer) rows = rows.filter(o => String(o.customer_id) === customer);
+  renderOrders(rows);
+}
+
+function cancelOrder(id) {
+  const o = allOrders.find(x => x.id === id);
+  confirmDialog(
+    `Cancel order ${o?.reference}?`,
+    "This order will be marked as cancelled.",
+    async () => {
+      try {
+        await api(`/api/outbound/${id}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+        showToast("Order cancelled.", "warn");
+        loadSidebarBadges();
+        await loadOrders();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Cancel Order", type: "warn" }
+  );
+}
+
+// ── New order form ──────────────────────────────────────────────────────────
+let orderLines = [];
+
+function openNewOutbound() {
+  orderLines = [{ product_id: "", quantity_ordered: 1, wi_ids: [] }];
+  modal.open("New outbound order", newOrderHTML(), {
+    lg: true,
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewOutbound()">Create order</button>
+    `,
+  });
+}
+
+function wiCheckboxes(lineIndex) {
+  if (!allWIs.length) return '<span class="muted-text text-sm">No WIs defined.</span>';
+  return allWIs.map(w => `
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-right:10px;cursor:pointer;font-weight:normal;color:var(--ink);text-transform:none;letter-spacing:0">
+      <input type="checkbox" class="wi-check" data-line="${lineIndex}" value="${w.id}" />
+      <span class="wi-tag">${esc(w.code)}</span>
+      <span class="muted-text">${esc(w.title)}</span>
+    </label>`).join("");
+}
+
+function lineRowHTML(i) {
+  const prodOpts = allProducts.map(p =>
+    `<option value="${p.id}">${esc(p.name)} — ${esc(p.sku)} (${p.quantity} in stock)</option>`).join("");
+  return `
+    <div class="card" style="margin-bottom:10px;padding:14px" id="line-${i}">
+      <div class="form-row" style="align-items:flex-end;margin-bottom:8px">
+        <label class="field" style="flex:2">Product *
+          <select id="line-prod-${i}"><option value="">— select —</option>${prodOpts}</select>
+        </label>
+        <label class="field" style="flex:0 0 90px">Quantity
+          <input type="number" id="line-qty-${i}" value="1" min="1" />
+        </label>
+        <button class="btn-step" style="margin-bottom:2px" onclick="removeLine(${i})" title="Remove line">×</button>
+      </div>
+      <div class="muted-text" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Work instructions</div>
+      <div>${wiCheckboxes(i)}</div>
+    </div>`;
+}
+
+function newOrderHTML() {
+  const custOpts = allCustomers.map(c =>
+    `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  return `
+    <div class="form-grid" style="margin-bottom:12px">
+      <label class="field">Customer
+        <select id="no-customer"><option value="">— select —</option>${custOpts}</select>
+      </label>
+      <label class="field">Required by
+        <input type="date" id="no-required" />
+      </label>
+    </div>
+    <label class="field" style="margin-bottom:12px">Delivery address
+      <input type="text" id="no-address" placeholder="Str. Fabricii 10, București" />
+    </label>
+    <label class="field" style="margin-bottom:16px">Notes / special requirements
+      <textarea id="no-notes" rows="2" placeholder="e.g. Deliver to loading dock B, contact security at gate"></textarea>
+    </label>
+    <div class="card-title">Line items</div>
+    <div id="order-lines">${lineRowHTML(0)}</div>
+    <button class="btn btn-ghost btn-sm mt-8" onclick="addLine()">+ Add product line</button>`;
+}
+
+function addLine() {
+  const i = orderLines.length;
+  orderLines.push({ product_id: "", quantity_ordered: 1, wi_ids: [] });
+  document.getElementById("order-lines").insertAdjacentHTML("beforeend", lineRowHTML(i));
+}
+
+function removeLine(i) {
+  document.getElementById(`line-${i}`)?.remove();
+}
+
+async function saveNewOutbound() {
+  const customer_id      = document.getElementById("no-customer").value || null;
+  const required_date    = document.getElementById("no-required").value;
+  const delivery_address = document.getElementById("no-address").value.trim();
+  const notes            = document.getElementById("no-notes").value.trim();
+
+  const items = [];
+  orderLines.forEach((_, i) => {
+    if (!document.getElementById(`line-${i}`)) return;
+    const pid = document.getElementById(`line-prod-${i}`)?.value;
+    const qty = parseInt(document.getElementById(`line-qty-${i}`)?.value) || 0;
+    if (!pid || qty <= 0) return;
+    const wi_ids = [...document.querySelectorAll(`.wi-check[data-line="${i}"]:checked`)]
+      .map(el => parseInt(el.value));
+    items.push({ product_id: pid, quantity_ordered: qty, wi_ids });
+  });
+
+  if (!items.length) { showToast("Add at least one product line.", "error"); return; }
+
+  try {
+    const res = await api("/api/outbound", {
+      method: "POST",
+      body: JSON.stringify({ customer_id, required_date, delivery_address, notes, items }),
+    });
+    modal.close();
+    showToast(`Order ${res.reference} created.`);
+    loadSidebarBadges();
+    window.location.href = `/outbound/${res.id}`;
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.getElementById("filter-status").addEventListener("change", applyFilters);
+document.getElementById("filter-customer").addEventListener("change", applyFilters);
+
+async function init() {
+  [allCustomers, allProducts, allWIs] = await Promise.all([
+    api("/api/customers"),
+    api("/api/products"),
+    api("/api/work-instructions"),
+  ]);
+
+  const custSel = document.getElementById("filter-customer");
+  custSel.innerHTML = '<option value="">All customers</option>' +
+    allCustomers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+
+  await loadOrders();
+}
+init();
+</script>
+{% endblock %}

@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Outbound Order — SyncLogistics{% endblock %}
+{% block page_title %}Outbound Order{% endblock %}
+{% block page_actions %}
+  <a href="/outbound" class="btn btn-ghost btn-sm no-print">← Back</a>
+  <button class="btn btn-ghost btn-sm no-print" onclick="window.print()">Print</button>
+  <div id="action-buttons" class="no-print" style="display:flex;gap:8px"></div>
+{% endblock %}
+
+{% block content %}
+
+<div class="two-col">
+  <!-- Order info + line items -->
+  <div>
+    <div class="card" id="order-header">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+        <div>
+          <div style="font-size:22px;font-weight:700;letter-spacing:-0.01em" id="order-ref">—</div>
+          <div class="muted-text text-sm mt-4" id="order-dates"></div>
+        </div>
+        <div id="order-status-badge"></div>
+      </div>
+      <hr class="divider" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <div class="muted-text text-sm">Customer</div>
+          <div style="font-weight:600;margin-top:2px" id="order-customer">—</div>
+          <div class="muted-text text-sm" id="order-customer-contact"></div>
+        </div>
+        <div>
+          <div class="muted-text text-sm">Delivery address</div>
+          <div style="margin-top:2px" id="order-address">—</div>
+        </div>
+        <div>
+          <div class="muted-text text-sm">Required by</div>
+          <div style="margin-top:2px;font-weight:600" id="order-required">—</div>
+        </div>
+        <div>
+          <div class="muted-text text-sm">Notes</div>
+          <div style="margin-top:2px" id="order-notes">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line items with WI checklists -->
+    <div class="card">
+      <div class="card-title">Line items &amp; work instructions</div>
+      <div id="items-container">
+        <p class="empty">Loading…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar: progress + movements -->
+  <div>
+    <div class="card">
+      <div class="card-title">Order progress</div>
+      <div id="order-steps" class="order-steps" style="flex-direction:column;align-items:flex-start;gap:8px"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Summary</div>
+      <div id="order-summary" class="muted-text text-sm"></div>
+    </div>
+
+    <div class="card" id="movements-card">
+      <div class="card-title">Stock movements</div>
+      <ul id="order-movements" class="activity"></ul>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ORDER_ID = {{ order_id }};
+const STATUS_LABELS = { pending:"Pending", processing:"Processing", shipped:"Shipped", cancelled:"Cancelled" };
+let orderData = null;
+
+function outboundStatusBadge(s) {
+  const icons = { pending:"○", processing:"◑", shipped:"✓", cancelled:"✕" };
+  return `<span class="badge status-${esc(s)}">${icons[s]||""} ${esc(STATUS_LABELS[s]||s)}</span>`;
+}
+
+function wiTagHTML(inst) {
+  const done = inst.completed;
+  return `
+    <button class="wi-tag ${done ? "wi-tag--done" : ""}" style="cursor:pointer;border:none"
+            onclick="toggleWI(${inst.order_item_id}, ${inst.id})"
+            title="${esc(inst.description||inst.title)} (click to ${done?"un":""}mark complete)">
+      ${esc(inst.code)} — ${esc(inst.title)}
+      ${inst.estimated_minutes > 0 ? `<span style="opacity:0.6;margin-left:4px">${inst.estimated_minutes}min</span>` : ""}
+    </button>`;
+}
+
+async function loadOrder() {
+  orderData = await api(`/api/outbound/${ORDER_ID}`);
+  const o   = orderData;
+
+  document.getElementById("order-ref").textContent = o.reference;
+  document.getElementById("order-status-badge").innerHTML = outboundStatusBadge(o.status);
+  document.getElementById("order-customer").textContent  = o.customer_name || "— No customer —";
+  document.getElementById("order-customer-contact").textContent =
+    [o.customer_email, o.customer_phone].filter(Boolean).join(" · ") || "";
+  document.getElementById("order-address").textContent  = o.delivery_address || "—";
+  document.getElementById("order-required").textContent = o.required_date || "—";
+  document.getElementById("order-notes").textContent    = o.notes || "—";
+
+  const dates = [`Created: ${o.created_at}`];
+  if (o.shipped_at)    dates.push(`Shipped: ${o.shipped_at}`);
+  document.getElementById("order-dates").textContent = dates.join("  ·  ");
+
+  // Action buttons
+  const btns = document.getElementById("action-buttons");
+  btns.innerHTML = "";
+  if (o.status === "pending") {
+    btns.innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="startProcessing()">Start processing</button>
+      <button class="btn btn-primary btn-sm" onclick="shipOrder()">Ship order</button>`;
+  } else if (o.status === "processing") {
+    btns.innerHTML = `<button class="btn btn-primary btn-sm" onclick="shipOrder()">Ship order</button>`;
+  }
+  if (o.status === "pending" || o.status === "processing") {
+    btns.innerHTML += `<button class="btn btn-ghost btn-sm" onclick="cancelOrder()">Cancel</button>`;
+  }
+
+  // Order steps
+  const steps = ["pending", "processing", "shipped"];
+  const cancelled = o.status === "cancelled";
+  document.getElementById("order-steps").innerHTML = (cancelled ? ["pending","processing","cancelled"] : steps)
+    .map(s => {
+      const done   = steps.indexOf(s) < steps.indexOf(o.status);
+      const active = s === o.status;
+      return `<div class="step ${done?"step--done":""} ${active?"step--active":""}">
+        ${done ? "✓" : active ? "●" : "○"} ${STATUS_LABELS[s]||s}
+      </div>`;
+    }).join("");
+
+  // Line items
+  const container = document.getElementById("items-container");
+  if (!o.items.length) {
+    container.innerHTML = '<p class="empty">No items.</p>';
+  } else {
+    let totalUnits = 0;
+    let totalWIs   = 0;
+    let doneWIs    = 0;
+
+    container.innerHTML = o.items.map(item => {
+      totalUnits += item.quantity_ordered;
+      totalWIs   += item.instructions.length;
+      doneWIs    += item.instructions.filter(w => w.completed).length;
+
+      const allDone = item.instructions.length > 0 &&
+                      item.instructions.every(w => w.completed);
+      const shipped = item.quantity_shipped >= item.quantity_ordered;
+
+      return `
+        <div style="padding:14px 0;border-bottom:1px solid var(--line)" id="item-${item.id}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+            <div>
+              <div style="font-weight:600">${esc(item.product_name)}</div>
+              <div class="muted-text text-sm">${esc(item.sku)} · Location: ${esc(item.product_location||"—")}</div>
+            </div>
+            <div style="text-align:right;white-space:nowrap">
+              <div style="font-size:18px;font-weight:700">${item.quantity_ordered} <span style="font-size:12px;font-weight:400;color:var(--muted)">${esc(item.unit||"pcs")}</span></div>
+              ${shipped
+                ? '<div style="font-size:11px;color:var(--ok);font-weight:600">✓ Shipped</div>'
+                : `<div style="font-size:11px;color:var(--muted)">${item.stock_qty} in stock</div>`}
+            </div>
+          </div>
+          ${item.instructions.length ? `
+          <div style="margin-top:10px">
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:6px">
+              Work instructions
+              ${allDone ? '<span style="color:var(--ok);margin-left:6px">All done</span>' : ""}
+            </div>
+            <ul class="wi-checklist">${item.instructions.map(wiTagHTML).join("")}</ul>
+          </div>` : ""}
+        </div>`;
+    }).join("");
+
+    // Remove last border
+    container.querySelector("div:last-child")?.style.setProperty("border-bottom", "none");
+
+    // Summary
+    document.getElementById("order-summary").innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
+        <div><div class="muted-text text-sm">Total units</div><strong>${totalUnits}</strong></div>
+        <div><div class="muted-text text-sm">SKUs</div><strong>${o.items.length}</strong></div>
+        ${totalWIs > 0 ? `
+        <div><div class="muted-text text-sm">WI progress</div>
+          <strong>${doneWIs} / ${totalWIs}</strong>
+          <div style="background:var(--line);border-radius:4px;height:4px;margin-top:4px">
+            <div style="background:var(--ok);height:100%;border-radius:4px;width:${Math.round(doneWIs/totalWIs*100)}%;transition:width 0.3s"></div>
+          </div>
+        </div>` : ""}
+      </div>`;
+  }
+
+  // Stock movements linked to this order
+  const movements = await api(`/api/movements?limit=50`);
+  const related   = movements.filter(m => m.reference === o.reference);
+  const ul        = document.getElementById("order-movements");
+  if (!related.length) {
+    ul.innerHTML = '<li><span class="when muted-text">No stock movements yet.</span></li>';
+  } else {
+    ul.innerHTML = related.map(m => `
+      <li>
+        <span>${esc(m.product_name)} <span class="delta-neg">${m.delta}</span></span>
+        <span class="when">${esc(m.created_at)}</span>
+      </li>`).join("");
+  }
+}
+
+async function toggleWI(itemId, instId) {
+  try {
+    await api(`/api/outbound/${ORDER_ID}/items/${itemId}/instructions/${instId}/toggle`, { method: "POST" });
+    await loadOrder();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+async function startProcessing() {
+  try {
+    await api(`/api/outbound/${ORDER_ID}/process`, { method: "POST" });
+    showToast("Order is now processing.");
+    loadSidebarBadges();
+    await loadOrder();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+function shipOrder() {
+  confirmDialog(
+    "Ship this order?",
+    "Stock will be decremented for all items. This cannot be undone.",
+    async () => {
+      try {
+        await api(`/api/outbound/${ORDER_ID}/ship`, { method: "POST" });
+        showToast("Order shipped. Stock updated.");
+        loadSidebarBadges();
+        await loadOrder();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Ship", type: "info" }
+  );
+}
+
+function cancelOrder() {
+  confirmDialog(
+    "Cancel this outbound order?",
+    "The order will be marked as cancelled.",
+    async () => {
+      try {
+        await api(`/api/outbound/${ORDER_ID}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+        showToast("Order cancelled.", "warn");
+        loadSidebarBadges();
+        await loadOrder();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Cancel Order", type: "warn" }
+  );
+}
+
+loadOrder();
+</script>
+{% endblock %}

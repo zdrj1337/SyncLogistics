@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Customers — SyncLogistics{% endblock %}
+{% block page_title %}Customers{% endblock %}
+{% block page_actions %}
+  <button class="btn btn-primary btn-sm" onclick="openAddCustomer()">+ Add customer</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="filter-bar" style="margin-bottom:16px">
+    <input type="search" id="search" placeholder="Search customers…" style="min-width:240px" />
+    <span id="cust-count" class="muted-text text-sm"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="name">Company</th>
+          <th data-sort="contact_name">Contact</th>
+          <th data-sort="email">Email</th>
+          <th data-sort="phone">Phone</th>
+          <th>Delivery address</th>
+          <th class="num" data-sort="order_count">Orders</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="customers-body">
+        <tr><td colspan="7" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allCustomers = [];
+
+function renderCustomers(rows) {
+  const tbody = document.getElementById("customers-body");
+  document.getElementById("cust-count").textContent =
+    rows.length ? `${rows.length} customer${rows.length !== 1 ? "s" : ""}` : "";
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No customers yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(c => `
+    <tr>
+      <td><strong>${esc(c.name)}</strong>
+        ${c.notes ? `<div class="muted-text text-sm">${esc(c.notes)}</div>` : ""}
+      </td>
+      <td>${esc(c.contact_name || "—")}</td>
+      <td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : "—"}</td>
+      <td>${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : "—"}</td>
+      <td class="muted-text text-sm">${esc(c.address || "—")}</td>
+      <td class="num">
+        ${c.order_count > 0
+          ? `<a href="/outbound?customer=${c.id}" style="color:var(--accent);font-weight:600">${c.order_count}</a>`
+          : "0"}
+      </td>
+      <td class="actions-cell">
+        <button class="btn-link" onclick="openEditCustomer(${c.id})">Edit</button>
+        <button class="btn-link btn-link--danger" onclick="deleteCustomer(${c.id})">Delete</button>
+      </td>
+    </tr>`).join("");
+}
+
+async function loadCustomers() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  allCustomers = await api("/api/customers");
+  const filtered = q
+    ? allCustomers.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        (c.contact_name||"").toLowerCase().includes(q) ||
+        (c.email||"").toLowerCase().includes(q))
+    : allCustomers;
+  renderCustomers(filtered);
+}
+
+function customerFormHTML(c = {}) {
+  return `
+    <div class="form-grid">
+      <label class="field" style="grid-column:1/3">Company name *
+        <input type="text" id="cf-name" value="${esc(c.name||"")}" placeholder="Google Romania SRL" />
+      </label>
+      <label class="field">Contact person
+        <input type="text" id="cf-contact" value="${esc(c.contact_name||"")}" />
+      </label>
+      <label class="field">Email
+        <input type="email" id="cf-email" value="${esc(c.email||"")}" />
+      </label>
+      <label class="field">Phone
+        <input type="tel" id="cf-phone" value="${esc(c.phone||"")}" />
+      </label>
+    </div>
+    <label class="field" style="margin-bottom:12px">Delivery address
+      <input type="text" id="cf-address" value="${esc(c.address||"")}"
+             placeholder="Str. Fabricii 10, București" />
+    </label>
+    <label class="field">Notes
+      <textarea id="cf-notes" rows="2">${esc(c.notes||"")}</textarea>
+    </label>`;
+}
+
+function collectCustomerForm() {
+  return {
+    name:         document.getElementById("cf-name").value.trim(),
+    contact_name: document.getElementById("cf-contact").value.trim(),
+    email:        document.getElementById("cf-email").value.trim(),
+    phone:        document.getElementById("cf-phone").value.trim(),
+    address:      document.getElementById("cf-address").value.trim(),
+    notes:        document.getElementById("cf-notes").value.trim(),
+  };
+}
+
+function openAddCustomer() {
+  modal.open("Add customer", customerFormHTML(), {
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewCustomer()">Add</button>
+    `,
+    onOpen: () => document.getElementById("cf-name").focus(),
+  });
+}
+
+async function saveNewCustomer() {
+  const data = collectCustomerForm();
+  if (!data.name) { showToast("Name is required.", "error"); return; }
+  try {
+    await api("/api/customers", { method: "POST", body: JSON.stringify(data) });
+    modal.close();
+    showToast("Customer added.");
+    await loadCustomers();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+function openEditCustomer(id) {
+  const c = allCustomers.find(x => x.id === id);
+  if (!c) return;
+  modal.open(`Edit — ${c.name}`, customerFormHTML(c), {
+    footer: `
+      <button class="btn btn-ghost" onclick="modal.close()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditCustomer(${id})">Save</button>
+    `,
+    onOpen: () => document.getElementById("cf-name").focus(),
+  });
+}
+
+async function saveEditCustomer(id) {
+  const data = collectCustomerForm();
+  if (!data.name) { showToast("Name is required.", "error"); return; }
+  try {
+    await api(`/api/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+    modal.close();
+    showToast("Customer updated.");
+    await loadCustomers();
+  } catch (err) { showToast(err.message, "error"); }
+}
+
+function deleteCustomer(id) {
+  const c = allCustomers.find(x => x.id === id);
+  confirmDialog(
+    `Delete "${c?.name}"?`,
+    "All orders for this customer will also be removed.",
+    async () => {
+      try {
+        await api(`/api/customers/${id}`, { method: "DELETE" });
+        showToast("Customer deleted.", "warn");
+        await loadCustomers();
+      } catch (err) { showToast(err.message, "error"); }
+    },
+    { confirmText: "Delete" }
+  );
+}
+
+document.getElementById("search").addEventListener("input", debounce(loadCustomers, 200));
+loadCustomers();
+</script>
+{% endblock %}

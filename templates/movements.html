@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Movements — SyncLogistics{% endblock %}
+{% block page_title %}Stock Movements{% endblock %}
+
+{% block content %}
+
+<div class="filter-bar" style="margin-bottom:16px">
+  <select id="filter-product">
+    <option value="">All products</option>
+  </select>
+  <select id="filter-type">
+    <option value="">All types</option>
+    <option value="purchase">Purchase</option>
+    <option value="sale">Sale</option>
+    <option value="adjustment">Adjustment</option>
+    <option value="return">Return</option>
+    <option value="correction">Correction</option>
+  </select>
+  <input type="date" id="filter-from" title="From date" />
+  <input type="date" id="filter-to" title="To date" />
+  <button class="btn btn-ghost btn-sm" onclick="applyFilters()">Apply</button>
+  <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
+  <span id="mov-count" class="muted-text text-sm"></span>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Product</th>
+          <th>Type</th>
+          <th>Reference</th>
+          <th>Reason</th>
+          <th class="num">Delta</th>
+        </tr>
+      </thead>
+      <tbody id="movements-body">
+        <tr><td colspan="6" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TYPE_LABELS = {
+  purchase:   "Purchase",
+  sale:       "Sale",
+  adjustment: "Adjustment",
+  return:     "Return",
+  correction: "Correction",
+};
+const TYPE_CLASS = {
+  purchase:   "badge--ok",
+  sale:       "badge--danger",
+  adjustment: "badge--accent",
+  return:     "badge--warn",
+  correction: "badge--muted",
+};
+
+function renderMovements(rows) {
+  const tbody = document.getElementById("movements-body");
+  document.getElementById("mov-count").textContent =
+    rows.length ? `${rows.length} movement${rows.length !== 1 ? "s" : ""}` : "";
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No movements found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(m => {
+    const sign = m.delta > 0 ? "+" : "";
+    const cls  = m.delta > 0 ? "delta-pos" : "delta-neg";
+    const type = m.type || "adjustment";
+    return `<tr>
+      <td class="muted-text">${esc(m.created_at)}</td>
+      <td><strong>${esc(m.product_name)}</strong></td>
+      <td><span class="badge ${TYPE_CLASS[type] || "badge--muted"}">${esc(TYPE_LABELS[type] || type)}</span></td>
+      <td class="muted-text">${m.reference ? `<a href="${m.reference.startsWith("PO-") ? "/orders" : "#"}" style="color:var(--accent)">${esc(m.reference)}</a>` : "—"}</td>
+      <td class="muted-text">${esc(m.reason || "—")}</td>
+      <td class="num"><span class="${cls}">${sign}${m.delta}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+async function applyFilters() {
+  const product_id = document.getElementById("filter-product").value;
+  const type       = document.getElementById("filter-type").value;
+  const from       = document.getElementById("filter-from").value;
+  const to         = document.getElementById("filter-to").value;
+  const params     = new URLSearchParams({ limit: 500 });
+  if (product_id) params.set("product_id", product_id);
+  if (type)       params.set("type", type);
+  if (from)       params.set("from", from);
+  if (to)         params.set("to", to);
+  const rows = await api("/api/movements?" + params);
+  renderMovements(rows);
+}
+
+function clearFilters() {
+  document.getElementById("filter-product").value = "";
+  document.getElementById("filter-type").value    = "";
+  clearDateInput("filter-from");
+  clearDateInput("filter-to");
+  applyFilters();
+}
+
+async function init() {
+  const products = await api("/api/products");
+  const sel      = document.getElementById("filter-product");
+  sel.innerHTML  = '<option value="">All products</option>' +
+    products.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  await applyFilters();
+}
+
+init();
+</script>
+{% endblock %}

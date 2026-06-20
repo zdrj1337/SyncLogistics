@@ -1,0 +1,8 @@
+# local database (created automatically on first run)
+inventory.db
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
