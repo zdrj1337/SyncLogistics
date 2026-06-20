@@ -115,11 +115,15 @@ RECENT_MOVEMENTS = [
     ( 8, 14, "DEL-DOC-WD22TB4",   -2, "sale",     "dispatch — dev team",        ""),
     # — Day 7-1: This week —
     ( 7, 10, "DEL-MON-U2422H",    -3, "sale",     "dispatch — branch Timișoara",""),
+    ( 6, 14, "DEL-MON-U2422H",    +8, "purchase", "goods received",             "PO-2026-0004"),
     ( 6, 11, "DEL-LAP-VOS3520",   -2, "sale",     "dispatch — HR",              ""),
     ( 5,  9, "LOG-PER-MXKEYS",    -3, "sale",     "dispatch — executive floor", ""),
+    ( 4, 10, "LOG-PER-MXM3S",     +6, "purchase", "goods received",             "PO-2026-0004"),
     ( 4, 14, "DEL-CBL-USBCH2M",   -6, "sale",     "dispatch — meeting rooms",   ""),
     ( 3, 10, "DEL-MON-P2422H",    -4, "sale",     "dispatch — IT expansion",    ""),
+    ( 2, 15, "KNG-SSD-1TNV",      +5, "purchase", "partial receive",            "PO-2026-0002"),
     ( 2, 11, "DEL-PER-WB3023",    -2, "sale",     "dispatch — remote workers",  ""),
+    ( 1, 14, "DEL-DOC-WD19S",     +5, "purchase", "goods received",             "PO-2026-0004"),
     ( 1,  9, "DEL-LAP-LAT5540",   -1, "sale",     "dispatch — VIP request",     ""),
     # — Today —
     ( 0, 10, "GEN-CBL-DP14",      -5, "sale",     "dispatch — meeting rooms",   ""),
