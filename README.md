@@ -6,7 +6,7 @@ orders with per-item work-instruction checklists. Built as a portfolio project, 
 real 3PL warehouse flow (supplier → warehouse → customer) inspired by my logistics internship
 at DP World.
 
-**Live demo:** https://florinzadorojneac.pythonanywhere.com/
+**Live demo:** [synclogistics.pythonanywhere.com](https://synclogistics.pythonanywhere.com/)
 
 ![SyncLogistics dashboard](screenshot.png)
 
